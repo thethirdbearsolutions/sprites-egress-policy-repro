@@ -4,7 +4,7 @@ A sprite makes an outbound request while its network policy allows all domains. 
 
 A sprite narrowed without that earlier request is fine. Once a sprite is in this state, clearing the policy doesn't recover it.
 
-Both scripts need only the `sprite` CLI, logged in. No other credentials are needed. Each script destroys every sprite it creates.
+The scripts need only the `sprite` CLI, logged in. No other credentials are needed. Each script destroys every sprite it creates.
 
 ## `repro.sh`: one red, one green
 
@@ -48,6 +48,30 @@ case | sequence | delay/5 from an allowed host
 ```
 
 It takes both a request under allow-all and narrowing afterwards (cases 5–9). Which host was requested doesn't matter (8, 9). Clearing the policy afterwards doesn't recover the sprite (10).
+
+## `idle.sh`: it's the idle gap
+
+Takes about two minutes. Streams a response from the allowed host one byte at a time, with a fixed gap between bytes, on a red sprite and a green one. Then it looks at the guest's own view of a stuck request.
+
+Output (2026-10-10 20:35 UTC):
+
+```
+gap  | green | red
+0.5s | 200 24/24 bytes in 12.455430s | 200 24/24 bytes in 12.020366s
+0.7s | 200 17/17 bytes in 11.482692s | 200 17/17 bytes in 11.512087s
+1s | 200 12/12 bytes in 11.170111s | 200 1/12 bytes in 25.001796s
+1.5s | 200 8/8 bytes in 10.826474s | 200 1/8 bytes in 25.002224s
+```
+
+On a red sprite a connection survives as long as bytes keep arriving at least every 0.7s, for as long as that lasts. A gap of 1s or more kills it after the first byte. So it's the time a connection sits idle that matters, not its age or how many bytes it carries.
+
+The guest doesn't hold the stuck state. During a stuck request, red and green look the same from inside:
+
+- `nf_conntrack_tcp_timeout_established` is 432000 on both, and the stuck connection is listed `ESTABLISHED` with that full timeout.
+- There's no `nft`, no `iptables` and nothing in `/sys/fs/bpf`.
+- All traffic leaves through the default route via `10.0.0.2` on `spr0`.
+
+On a red sprite, a connection to an address that DNS never returned for an allowed domain (`curl --resolve httpbin.org:443:1.1.1.1`) is refused instantly, the same as on a green one. The allowlist itself still works.
 
 ## Where the cutoff falls
 
